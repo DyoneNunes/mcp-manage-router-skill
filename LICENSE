@@ -1,32 +1,77 @@
 mcp-manage-router-skill
+
+MIT License + "Commons Clause" License Condition v1.0
 Copyright (c) 2026 Dyone Andrade <contato@dyonedev.com.br>
+SPDX-License-Identifier: LicenseRef-MIT-Commons-Clause
 
-Licença: MIT + Commons Clause v1.0
+--------------------------------------------------------------------------------
+CONTEÚDO / CONTENTS
+--------------------------------------------------------------------------------
+
+  1. Resumo em linguagem simples ........ informativo, não substitui os termos
+  2. Plain-language summary ............. informative, not a substitute
+  3. Commons Clause License Condition ... termo legal / binding
+  4. MIT License ........................ termo legal / binding
+
+Em caso de divergência, valem as seções 3 e 4.
+If anything here conflicts, sections 3 and 4 prevail.
 
 ================================================================================
-RESUMO EM LINGUAGEM SIMPLES
-(este resumo é apenas informativo; valem os termos legais logo abaixo)
+1. RESUMO EM LINGUAGEM SIMPLES
 ================================================================================
+
+Este software é gratuito e tem o código aberto para leitura e modificação,
+mas não pode ser vendido.
 
 Você PODE:
-  - usar o software gratuitamente, para fins pessoais ou dentro da sua empresa;
-  - estudar, copiar, modificar e criar trabalhos derivados;
-  - redistribuir cópias, modificadas ou não, desde que gratuitamente e
-    mantendo este arquivo de licença e o aviso de copyright.
+
+  [+] usar o software gratuitamente, para fins pessoais ou dentro da sua
+      empresa;
+  [+] estudar, copiar, modificar e criar trabalhos derivados;
+  [+] redistribuir cópias, modificadas ou não, desde que gratuitamente e
+      mantendo este arquivo de licença e o aviso de copyright.
 
 Você NÃO PODE:
-  - vender o software, no todo ou em parte;
-  - cobrar por um produto ou serviço cujo valor venha, total ou
-    substancialmente, das funcionalidades deste software (incluindo
-    hospedagem, consultoria ou suporte pagos relacionados a ele);
-  - remover ou alterar este aviso de licença.
+
+  [-] vender o software, no todo ou em parte;
+  [-] cobrar por um produto ou serviço cujo valor venha, total ou
+      substancialmente, das funcionalidades deste software, incluindo
+      hospedagem, consultoria ou suporte pagos relacionados a ele;
+  [-] remover ou alterar este aviso de licença.
 
 O software é fornecido "como está", sem garantia de qualquer tipo.
-Para uso comercial fora destes termos, entre em contato com o autor.
+Para uso comercial fora destes termos, escreva para contato@dyonedev.com.br.
 
 ================================================================================
-"Commons Clause" License Condition v1.0
+2. PLAIN-LANGUAGE SUMMARY
 ================================================================================
+
+This software is free of charge and its source is open to read and modify,
+but it may not be sold.
+
+You MAY:
+
+  [+] use the software free of charge, personally or inside your company;
+  [+] study, copy, modify and create derivative works;
+  [+] redistribute copies, modified or not, as long as it is free of charge
+      and this license file and the copyright notice are kept.
+
+You MAY NOT:
+
+  [-] sell the software, in whole or in part;
+  [-] charge for a product or service whose value derives, entirely or
+      substantially, from the functionality of this software, including paid
+      hosting, consulting or support related to it;
+  [-] remove or alter this license notice.
+
+The software is provided "as is", without warranty of any kind.
+For commercial use outside these terms, write to contato@dyonedev.com.br.
+
+================================================================================
+3. COMMONS CLAUSE LICENSE CONDITION v1.0
+================================================================================
+
+"Commons Clause" License Condition v1.0
 
 The Software is provided to you by the Licensor under the License, as defined
 below, subject to the following condition.
@@ -48,10 +93,12 @@ License: MIT License
 Licensor: Dyone Andrade
 
 ================================================================================
-MIT License
+4. MIT LICENSE
 ================================================================================
 
-Copyright (c) 2026 Dyone Andrade <contato@dyonedev.com.br>
+MIT License
+
+Copyright (c) 2026 Dyone Andrade
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
