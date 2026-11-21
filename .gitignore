@@ -1,0 +1,26 @@
+# Cache local do índice (gerado por máquina, nunca versionado)
+index.json
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Rascunhos e dados locais
+drafts/
+backups/
+conflicts/
+*.draft.md
+scratch/
+.env
+.env.*
+
+# Editor / SO
+.idea/
+.vscode/
+.DS_Store
