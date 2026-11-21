@@ -1,4 +1,55 @@
+mcp-manage-router-skill
+Copyright (c) 2026 Dyone Andrade <contato@dyonedev.com.br>
+
+Licença: MIT + Commons Clause v1.0
+
+================================================================================
+RESUMO EM LINGUAGEM SIMPLES
+(este resumo é apenas informativo; valem os termos legais logo abaixo)
+================================================================================
+
+Você PODE:
+  - usar o software gratuitamente, para fins pessoais ou dentro da sua empresa;
+  - estudar, copiar, modificar e criar trabalhos derivados;
+  - redistribuir cópias, modificadas ou não, desde que gratuitamente e
+    mantendo este arquivo de licença e o aviso de copyright.
+
+Você NÃO PODE:
+  - vender o software, no todo ou em parte;
+  - cobrar por um produto ou serviço cujo valor venha, total ou
+    substancialmente, das funcionalidades deste software (incluindo
+    hospedagem, consultoria ou suporte pagos relacionados a ele);
+  - remover ou alterar este aviso de licença.
+
+O software é fornecido "como está", sem garantia de qualquer tipo.
+Para uso comercial fora destes termos, entre em contato com o autor.
+
+================================================================================
+"Commons Clause" License Condition v1.0
+================================================================================
+
+The Software is provided to you by the Licensor under the License, as defined
+below, subject to the following condition.
+
+Without limiting other conditions in the License, the grant of rights under the
+License will not include, and the License does not grant to you, the right to
+Sell the Software.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the rights
+granted to you under the License to provide to third parties, for a fee or
+other consideration (including without limitation fees for hosting or
+consulting/ support services related to the Software), a product or service
+whose value derives, entirely or substantially, from the functionality of the
+Software. Any license notice or attribution required by the License must also
+include this Commons Clause License Condition notice.
+
+Software: mcp-manage-router-skill
+License: MIT License
+Licensor: Dyone Andrade
+
+================================================================================
 MIT License
+================================================================================
 
 Copyright (c) 2026 Dyone Andrade <contato@dyonedev.com.br>
 
