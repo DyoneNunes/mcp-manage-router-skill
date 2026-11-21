@@ -23,6 +23,7 @@
     <a href="#início-rápido">Início rápido</a> •
     <a href="#tools-do-servidor-mcp">Tools MCP</a> •
     <a href="#meta-skill-skill-orchestrator">Meta-skill</a> •
+    <a href="#skills-incluídas">Skills incluídas</a> •
     <a href="#privacidade">Privacidade</a> •
     <a href="#licença">Licença</a>
   </p>
@@ -176,7 +177,8 @@ uv run skills-router init --pin minha-skill --pin outra-skill
    skills fixadas.
 6. Registra o servidor MCP `skills-router` na config global de cada cliente, com cópia de
    segurança do arquivo antes de editar.
-7. Gera o `index.json` inicial.
+7. Instala as [skills incluídas](#skills-incluídas) que você ainda não tiver.
+8. Gera o `index.json` inicial.
 
 Itens que não são skills (pastas sem `SKILL.md`, diretórios ocultos) nunca são movidos. Se
 dois clientes tiverem skills homônimas com conteúdo diferente, a primeira é mantida e a
@@ -246,6 +248,17 @@ e instalada pelo `init`. Ela impõe três regras ao agente:
 > O servidor não tem como verificar que um humano aprovou o `promote_draft`. A garantia
 > vem das regras da meta-skill e do pedido de permissão do próprio cliente. Para promover
 > você mesmo, use `skills-router promote NOME` no terminal.
+
+## Skills incluídas
+
+Além do orquestrador, o pacote traz skills prontas em [`templates/`](templates). O `init`
+as copia para `~/.ai-skills/skills` apenas se você ainda não tiver uma skill com o mesmo
+nome, então uma versão sua nunca é sobrescrita. Elas não são fixadas: ficam disponíveis
+pela busca, e você expõe com `skills-router pin NOME` se quiser.
+
+| Skill | O que faz |
+|---|---|
+| [`license-designer`](templates/license-designer/SKILL.md) | Escolhe, redige e aplica a licença de um repositório: entrevista sobre o que permitir e proibir, detecta contradições como "MIT mas proibido vender", gera o `LICENSE` com o texto oficial e sincroniza manifestos e README. |
 
 ## Referência
 

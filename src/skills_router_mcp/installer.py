@@ -464,6 +464,15 @@ def cmd_init(args) -> int:
             shutil.copy2(source, dest)
 
     _, pending = migrate(ops, clients)
+    # Skills extras que acompanham o pacote: só entram se ainda não existirem,
+    # para nunca sobrescrever uma versão que o usuário já tenha ou tenha editado.
+    for extra in sorted(template_dir().iterdir()):
+        target = indexer.skills_dir() / extra.name
+        if extra.name == ORCHESTRATOR or not (extra / "SKILL.md").is_file():
+            continue
+        if not target.exists() and extra.name not in pending:
+            ops.log(f"Instala a skill incluída '{extra.name}'")
+            ops.copytree(extra, target)
     if not ops.dry:
         indexer.build_index()
     sync_links(ops, clients, cfg, pending)
