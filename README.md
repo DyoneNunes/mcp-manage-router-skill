@@ -1,55 +1,204 @@
-# mcp-manage-router-skill
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg" />
+    <img src="docs/assets/hero-dark.svg" alt="mcp-manage-router-skill: MCP Server + Meta-Skill de roteamento de skills" width="100%" />
+  </picture>
 
-**MCP Server + Meta-Skill de roteamento de skills.**
+  <br />
+
+  ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+  ![MCP](https://img.shields.io/badge/MCP-Server-0EA5E9?style=for-the-badge)
+  ![FastMCP](https://img.shields.io/badge/FastMCP-stdio-10B981?style=for-the-badge)
+  ![uv](https://img.shields.io/badge/uv-ready-DE5FE9?style=for-the-badge&logo=uv&logoColor=white)
+  ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT_+_Commons_Clause-F59E0B?style=for-the-badge)
+
+  <p align="center">
+    <strong>MCP Server + Meta-Skill de roteamento de skills: seu agente encontra a skill certa entre centenas, sem carregar todas no contexto.</strong>
+  </p>
+
+  <p align="center">
+    <a href="#visão-geral">Visão geral</a> •
+    <a href="#arquitetura-e-fluxo">Arquitetura</a> •
+    <a href="#início-rápido">Início rápido</a> •
+    <a href="#tools-do-servidor-mcp">Tools MCP</a> •
+    <a href="#meta-skill-skill-orchestrator">Meta-skill</a> •
+    <a href="#privacidade">Privacidade</a> •
+    <a href="#licença">Licença</a>
+  </p>
+</div>
+
+---
+
+## Visão geral
 
 Quem acumula dezenas ou centenas de skills paga por isso em toda sessão: cada cliente
-(Claude Code, Gemini CLI, Cursor...) carrega a descrição de todas elas no contexto. Este
-projeto troca esse custo por uma busca:
+(Claude Code, Gemini CLI, Cursor...) carrega a descrição de **todas** elas no contexto,
+use ou não.
 
-- as skills ficam numa **fonte única** (`~/.ai-skills/skills`), fora do contexto;
-- um **servidor MCP** indexa os `SKILL.md` e responde buscas com metadados resumidos;
-- uma **meta-skill** (`skill-orchestrator`) ensina o agente a buscar, reaproveitar e
-  combinar skills — e a nunca criar uma nova sem aprovação humana.
+Este projeto troca esse custo fixo por uma busca. As skills saem das pastas dos clientes e
+vão para uma fonte única; o agente passa a enxergar nativamente só um orquestrador e as
+skills que você fixar, e busca o resto quando precisa.
 
-O agente passa a enxergar nativamente só o orquestrador e as skills que você fixar.
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🔎 Busca por relevância</h3>
+      Ranking leve sobre nome, tags e descrição. A resposta traz só metadados resumidos e
+      um score, nunca o arquivo inteiro.
+    </td>
+    <td width="33%" valign="top">
+      <h3>📦 Carga sob demanda</h3>
+      O <code>SKILL.md</code> completo só entra no contexto depois de escolhido, junto com
+      a lista de arquivos de apoio da skill.
+    </td>
+    <td width="33%" valign="top">
+      <h3>♻️ Índice que se cuida</h3>
+      Na subida do servidor e a cada busca, os arquivos são comparados; a reindexação só
+      roda se algum <code>SKILL.md</code> mudou.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🧭 Gatekeeping</h3>
+      A meta-skill impõe a ordem: reaproveitar, depois combinar, e só então apontar a
+      lacuna. Nada de skill nova para cada tarefa.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🙋 Aprovação humana</h3>
+      Skills novas nascem como rascunho em quarentena e só são promovidas com duas
+      confirmações explícitas.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🛟 Instalação reversível</h3>
+      Um comando migra tudo com backup e manifesto. Outro comando devolve cada arquivo ao
+      lugar de origem.
+    </td>
+  </tr>
+</table>
 
-## Instalação
+## Arquitetura e fluxo
+
+São duas peças: a **meta-skill** diz ao agente quando e como buscar; o **servidor MCP**
+executa a busca e entrega o conteúdo.
+
+```mermaid
+flowchart LR
+    subgraph Clientes["Clientes de IA"]
+        CC["Claude Code"]
+        GC["Gemini CLI"]
+        CU["Cursor"]
+        OT["Codex / opencode / Antigravity"]
+    end
+
+    subgraph Nativo["Carregado em toda sessão"]
+        ORQ["skill-orchestrator"]
+        PIN["skills fixadas (--pin)"]
+    end
+
+    subgraph Router["Servidor MCP: skills-router"]
+        SRV["server.py (FastMCP)"]
+        IDX["indexer.py"]
+    end
+
+    subgraph Runtime["~/.ai-skills"]
+        SK[("skills/")]
+        DR[("drafts/")]
+        IX[("index.json")]
+    end
+
+    Clientes --> ORQ
+    Clientes --> PIN
+    ORQ -->|"search / get"| SRV
+    SRV --> IDX
+    IDX --> IX
+    IDX --> SK
+    SRV -->|"propose_skill_draft"| DR
+    DR -->|"promote_draft (aprovado)"| SK
+    PIN -.->|"symlink"| SK
+    ORQ -.->|"symlink"| SK
+```
+
+O que acontece numa tarefa comum:
+
+```mermaid
+sequenceDiagram
+    actor U as Você
+    participant A as Agente
+    participant R as skills-router
+    participant F as ~/.ai-skills
+
+    U->>A: "Crie uma landing page para um SaaS"
+    A->>R: search_installed_skills("landing page saas")
+    R->>F: lê index.json (reindexa se algo mudou)
+    R-->>A: nome, descrição, tags, score
+    Note over A: Decide: reaproveitar, combinar ou apontar lacuna
+    A->>R: get_skill_content("landing-page-design")
+    R->>F: lê só o SKILL.md escolhido
+    R-->>A: conteúdo completo + arquivos de apoio
+    A-->>U: executa a tarefa seguindo a skill
+```
+
+## Início rápido
 
 Requer [uv](https://docs.astral.sh/uv/) e Python 3.10+.
 
 ```bash
-git clone <url-do-repositorio> mcp-manage-router-skill
+git clone https://github.com/DyoneNunes/mcp-manage-router-skill.git
 cd mcp-manage-router-skill
-uv run skills-router init --dry-run   # mostra o que seria feito
+
+uv run skills-router init --dry-run   # mostra o que seria feito, sem alterar nada
 uv run skills-router init             # executa
 ```
 
-Ou como ferramenta global: `uv tool install <url-ou-caminho>` e depois `skills-router init`.
+Depois, reinicie os clientes para carregarem o servidor MCP e a nova lista de skills.
 
-### O que o `init` faz
+> [!IMPORTANT]
+> O `init` **move** as skills que já existem nas pastas dos seus clientes. Nada é apagado:
+> os originais vão para `~/.ai-skills/backups/<data>/` com um manifesto, e
+> `skills-router restore` desfaz tudo. Rode o `--dry-run` antes.
+
+Para manter algumas skills nativas (aparecendo no menu `/` do cliente), fixe-as:
+
+```bash
+uv run skills-router init --pin minha-skill --pin outra-skill
+```
+
+<details>
+<summary><strong>📋 O que o <code>init</code> faz, passo a passo (clique para expandir)</strong></summary>
 
 1. Cria `~/.ai-skills/skills` e `~/.ai-skills/drafts`.
 2. Instala a meta-skill em `~/.ai-skills/skills/skill-orchestrator/SKILL.md`.
 3. Detecta os clientes instalados e **importa** as skills que eles já têm para a fonte
-   única. Os originais não são apagados: vão para `~/.ai-skills/backups/<data>/`, com um
-   manifesto que permite desfazer tudo.
-4. Deixa na pasta de skills de cada cliente apenas symlinks para o orquestrador e para as
-   skills fixadas (`--pin`).
-5. Registra o servidor MCP `skills-router` na config global de cada cliente (com cópia de
-   segurança do arquivo antes de editar).
-6. Gera o `index.json` inicial.
+   única. Skills idênticas em vários clientes são importadas uma vez só.
+4. Move os originais para `~/.ai-skills/backups/<data>/`, com manifesto.
+5. Deixa na pasta de skills de cada cliente apenas symlinks para o orquestrador e para as
+   skills fixadas.
+6. Registra o servidor MCP `skills-router` na config global de cada cliente, com cópia de
+   segurança do arquivo antes de editar.
+7. Gera o `index.json` inicial.
 
-Opções úteis:
+Itens que não são skills (pastas sem `SKILL.md`, diretórios ocultos) nunca são movidos. Se
+dois clientes tiverem skills homônimas com conteúdo diferente, a primeira é mantida e a
+outra vai para `~/.ai-skills/conflicts/` para você decidir.
+
+</details>
+
+<details>
+<summary><strong>⚙️ Opções do <code>init</code> (clique para expandir)</strong></summary>
 
 | Opção | Efeito |
 |---|---|
 | `--dry-run` | Só relata; não altera nada. |
 | `--pin NOME` | Mantém a skill nativa nos clientes (repetível). |
-| `--expose all` | Em vez de links individuais, a pasta do cliente vira symlink para `~/.ai-skills/skills` (unifica, mas não economiza contexto). |
+| `--expose all` | A pasta do cliente vira symlink para `~/.ai-skills/skills` inteira. Unifica, mas não economiza contexto. |
 | `--clients claude,cursor` | Restringe os clientes tratados. |
 | `--server-command "..."` | Define o comando usado pelos clientes para subir o servidor. |
 
-Clientes suportados:
+</details>
+
+<details>
+<summary><strong>🖥️ Clientes suportados (clique para expandir)</strong></summary>
 
 | Cliente | Pasta de skills | Config MCP |
 |---|---|---|
@@ -59,53 +208,52 @@ Clientes suportados:
 | Codex CLI | `~/.codex/skills` | `~/.codex/config.toml` |
 | opencode | `~/.config/opencode/skills` | `~/.config/opencode/opencode.json` |
 | Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` |
-| `~/.agents` (compartilhado) | `~/.agents/skills` | — |
+| `~/.agents` (compartilhado) | `~/.agents/skills` | não se aplica |
 
-Itens que não são skills (pastas sem `SKILL.md`, diretórios ocultos como `.system`) nunca
-são movidos. Se dois clientes tiverem skills homônimas com conteúdo diferente, a primeira
-é mantida e a outra vai para `~/.ai-skills/conflicts/` para você decidir.
+</details>
 
-## Ambiente local (`~/.ai-skills/`)
-
-```
-~/.ai-skills/
-├── skills/        fonte única de verdade (uma pasta por skill, com SKILL.md)
-├── drafts/        quarentena de rascunhos aguardando aprovação humana
-├── index.json     cache leve: name, description, tags e path de cada skill
-├── config.json    preferências desta máquina (skills fixadas, clientes)
-└── backups/       originais movidos pelo init + manifesto para o restore
-```
-
-Defina `AI_SKILLS_HOME` para usar outro diretório. Pacotes que agrupam sub-skills em
-`<pacote>/skills/<sub>/SKILL.md` também são indexados.
+> [!TIP]
+> Prefere instalar como ferramenta global? Use
+> `uv tool install git+https://github.com/DyoneNunes/mcp-manage-router-skill` e rode
+> `skills-router init` de qualquer lugar.
 
 ## Tools do servidor MCP
 
 | Tool | O que faz |
 |---|---|
-| `search_installed_skills(query, limit=5)` | Busca por relevância no índice; devolve só `name`, `description`, `tags`, `path` e `score`. |
+| `search_installed_skills(query, limit=5)` | Busca por relevância no índice. Devolve só `name`, `description`, `tags`, `path` e `score`. |
 | `get_skill_content(skill_name)` | Devolve o `SKILL.md` completo da skill escolhida e a lista de arquivos de apoio. |
-| `rebuild_index()` | Força a reindexação. |
+| `rebuild_index()` | Força a reindexação do diretório oficial. |
 | `propose_skill_draft(name, description, content)` | Salva um rascunho **somente** em `drafts/<name>/SKILL.md`. |
 | `promote_draft(skill_name)` | Move o rascunho para `skills/` e reindexa. |
 
-O índice se atualiza sozinho: na subida do servidor e a cada busca, os `SKILL.md` são
-comparados (caminho, data e tamanho) e a reindexação só ocorre se algo mudou.
+A busca é por palavras-chave, não semântica. Como a maioria das skills é descrita em
+inglês, consultas em inglês costumam achar mais.
 
 ## Meta-skill `skill-orchestrator`
 
-Distribuída em [`templates/skill-orchestrator/SKILL.md`](templates/skill-orchestrator/SKILL.md).
-Regras centrais:
+Distribuída em [`templates/skill-orchestrator/SKILL.md`](templates/skill-orchestrator/SKILL.md)
+e instalada pelo `init`. Ela impõe três regras ao agente:
 
-1. **Gatilho** — em tarefas de desenvolvimento, arquitetura ou automação, buscar primeiro.
-2. **Gatekeeping** — reaproveitar → combinar → só então apontar a lacuna.
-3. **Human-in-the-loop** — nunca criar skill automaticamente; rascunho e promoção exigem
-   duas confirmações explícitas e separadas.
+1. **Gatilho.** Em tarefas de desenvolvimento, arquitetura ou automação, buscar primeiro.
+2. **Gatekeeping.** Reaproveitar uma skill existente; se nenhuma cobre sozinha, combinar
+   duas ou três; só então apontar a lacuna e sugerir uma skill externa ou nova.
+3. **Human-in-the-loop.** Propor skill nova apenas para tarefas com mais de três passos
+   específicos e claramente reutilizáveis, pedindo confirmação antes do rascunho e de novo
+   antes da promoção.
 
-## Outros comandos
+> [!WARNING]
+> O servidor não tem como verificar que um humano aprovou o `promote_draft`. A garantia
+> vem das regras da meta-skill e do pedido de permissão do próprio cliente. Para promover
+> você mesmo, use `skills-router promote NOME` no terminal.
+
+## Referência
+
+<details>
+<summary><strong>⌨️ Comandos da CLI (clique para expandir)</strong></summary>
 
 ```bash
-skills-router status            # resumo do ambiente
+skills-router status            # runtime, total indexado, fixadas e links por cliente
 skills-router search fastapi postgres
 skills-router pin NOME          # expõe uma skill nativamente
 skills-router unpin NOME
@@ -113,22 +261,63 @@ skills-router drafts            # rascunhos em quarentena
 skills-router promote NOME      # promoção feita por você, pelo terminal
 skills-router reindex
 skills-router restore           # desfaz o init a partir do último backup
+skills-router serve             # sobe o servidor MCP em stdio
 ```
 
-## Privacidade
+</details>
 
-O repositório não guarda nada sobre quem o usa. Caminhos saem de `$HOME`/`AI_SKILLS_HOME`,
-as preferências ficam em `~/.ai-skills/config.json`, e o autor gravado nos rascunhos é lido
-em tempo de execução do `git config --global user.name` (ou do usuário do sistema).
-`index.json`, rascunhos e backups nunca são versionados.
+<details>
+<summary><strong>🗂️ Ambiente local <code>~/.ai-skills/</code> (clique para expandir)</strong></summary>
 
-## Desenvolvimento
+```
+~/.ai-skills/
+├── skills/        fonte única de verdade (uma pasta por skill, com SKILL.md)
+├── drafts/        quarentena de rascunhos aguardando aprovação humana
+├── index.json     cache leve: name, description, tags e path de cada skill
+├── config.json    preferências desta máquina (skills fixadas, clientes)
+├── backups/       originais movidos pelo init + manifesto para o restore
+└── conflicts/     versões divergentes de skills com o mesmo nome
+```
+
+Defina `AI_SKILLS_HOME` para usar outro diretório. Pacotes que agrupam sub-skills em
+`<pacote>/skills/<sub>/SKILL.md` também são indexados.
+
+</details>
+
+<details>
+<summary><strong>🧪 Desenvolvimento e testes (clique para expandir)</strong></summary>
 
 ```bash
 uv sync
 AI_SKILLS_HOME=/tmp/ai-skills-teste uv run skills-router status
-uv run skills-router serve      # servidor MCP em stdio
+uv run skills-router serve
 ```
+
+Para testar o instalador sem tocar nas suas pastas, aponte `HOME` para um diretório
+temporário:
+
+```bash
+export FAKE=$(mktemp -d)
+HOME=$FAKE uv run skills-router init --dry-run
+```
+
+Para inspecionar as tools sem um agente:
+
+```bash
+npx @modelcontextprotocol/inspector uv run skills-router serve
+```
+
+</details>
+
+## Privacidade
+
+O repositório não guarda nada sobre quem o usa:
+
+- **Caminhos** saem de `$HOME` ou de `AI_SKILLS_HOME`.
+- **Preferências** (skills fixadas, clientes) ficam em `~/.ai-skills/config.json`.
+- **Autoria dos rascunhos** é lida em tempo de execução do `git config --global user.name`
+  ou do usuário do sistema.
+- **`index.json`, rascunhos e backups** nunca são versionados.
 
 ## Licença
 
