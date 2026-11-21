@@ -24,6 +24,7 @@
     <a href="#tools-do-servidor-mcp">Tools MCP</a> •
     <a href="#meta-skill-skill-orchestrator">Meta-skill</a> •
     <a href="#skills-incluídas">Skills incluídas</a> •
+    <a href="#segurança">Segurança</a> •
     <a href="#privacidade">Privacidade</a> •
     <a href="#licença">Licença</a>
   </p>
@@ -321,6 +322,29 @@ npx @modelcontextprotocol/inspector uv run skills-router serve
 ```
 
 </details>
+
+## Segurança
+
+Skills são instruções que o agente segue, então uma skill de origem duvidosa é um vetor de
+ataque. O que o projeto faz a respeito:
+
+- **Leitura confinada.** O servidor só lê arquivos chamados `SKILL.md` dentro de
+  `~/.ai-skills/skills`. Um `SKILL.md` que seja symlink para outro arquivo, ou um
+  `index.json` adulterado apontando para fora, é recusado.
+- **Limites de tamanho.** Leitura de `SKILL.md` limitada a 512 KB e rascunhos a 256 KB.
+  Frontmatter malformado ou malicioso (como bombas de aliases YAML) é ignorado.
+- **Quarentena.** Rascunhos nunca entram direto em `skills/`, e rascunhos com symlinks não
+  são promovidos.
+- **Configs protegidas.** Arquivos de configuração dos clientes são regravados com
+  permissão restrita desde a criação, e a pasta de backups é acessível só pelo dono.
+- **Regra na meta-skill.** O orquestrador instrui o agente a não obedecer a uma skill que
+  mande criar ou promover outra skill, ler credenciais ou alterar configurações.
+
+Para exigir que toda promoção passe por você no terminal, defina
+`SKILLS_ROUTER_PROMOTE=cli` no ambiente do servidor: a tool `promote_draft` passa a recusar
+e indica o comando `skills-router promote NOME`.
+
+Revise skills de terceiros antes de instalá-las, como faria com qualquer script.
 
 ## Privacidade
 

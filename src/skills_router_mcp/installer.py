@@ -129,6 +129,12 @@ class Ops:
             rel = Path(*original.parts[1:])
         return self.backup_root / "files" / rel
 
+    def _secure_backup_root(self) -> None:
+        """Backups guardam cópias de configs com credenciais: só o dono entra."""
+        for folder in (self.backup_root.parent, self.backup_root):
+            folder.mkdir(parents=True, exist_ok=True)
+            os.chmod(folder, 0o700)
+
     def mkdir(self, path: Path) -> None:
         if not path.is_dir() and not self.dry:
             path.mkdir(parents=True, exist_ok=True)
@@ -141,6 +147,7 @@ class Ops:
     def move_to_backup(self, original: Path) -> None:
         dest = self._backup_path(original)
         if not self.dry:
+            self._secure_backup_root()
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(original), str(dest))
         self.manifest["moves"].append({"from": str(original), "to": str(dest)})
@@ -150,15 +157,20 @@ class Ops:
             return
         dest = self._backup_path(original)
         if not self.dry:
+            self._secure_backup_root()
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(original, dest)
+            if os.path.lexists(dest):
+                os.unlink(dest)
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(original.read_bytes())
         self.manifest["config_backups"].append({"from": str(original), "to": str(dest)})
 
     def save_manifest(self) -> None:
         touched = any(self.manifest[k] for k in ("moves", "registered", "config_backups"))
         if self.dry or not touched:
             return
-        self.backup_root.mkdir(parents=True, exist_ok=True)
+        self._secure_backup_root()
         (self.backup_root / "manifest.json").write_text(
             json.dumps(self.manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -263,11 +275,22 @@ def migrate(ops: Ops, clients: list[Client]) -> tuple[dict, set[str]]:
 # --------------------------------------------------------------------------- #
 def _resolve_skill_dir(name: str, pending: set[str]) -> Path | None:
     direct = indexer.skills_dir() / name
-    if (direct / "SKILL.md").is_file() or name in pending:
+    if name in pending:               # dry-run: ainda vai ser importada
+        return direct
+    if os.path.lexists(direct / "SKILL.md"):
+        try:
+            indexer.resolve_skill_file(direct / "SKILL.md")
+        except ValueError:
+            return None               # recusada pelo indexador: não expor aos clientes
         return direct
     data = indexer.load_index()
     entry = indexer.find_skill(name, data) if data else None
-    return Path(entry["path"]).parent if entry else None
+    if entry is None:
+        return None
+    try:   # o índice é um arquivo local: nunca criar link para fora do diretório oficial
+        return indexer.resolve_skill_file(entry["path"]).parent
+    except ValueError:
+        return None
 
 
 def sync_links(ops: Ops, clients: list[Client], cfg: dict, pending: set[str] = frozenset()) -> None:
@@ -329,11 +352,10 @@ def sync_links(ops: Ops, clients: list[Client], cfg: dict, pending: set[str] = f
 # Registro do servidor MCP nas configs globais
 # --------------------------------------------------------------------------- #
 def _write_text(path: Path, text: str) -> None:
+    path = Path(os.path.realpath(path))   # config que é symlink (dotfiles): mantém o link
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    tmp = path.with_name(path.name + ".skills-router.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    # Temporário exclusivo e 0600: configs de clientes costumam guardar tokens de outros servidores.
+    indexer.atomic_write(path, text, mode)
 
 
 def _edit_json(ops: Ops, path: Path, section: str, value: dict | None) -> bool:
@@ -485,6 +507,8 @@ def cmd_init(args) -> int:
         data = indexer.build_index()
         ops.save_manifest()
         ops.log(f"Índice: {len(data['skills'])} skills em {indexer.index_path()}")
+        for item in data.get("unsafe_ignored", []):
+            ops.warn(f"Skill NÃO indexada ({item['reason']}): {item['path']}")
     if ops.warnings:
         print(f"\n{len(ops.warnings)} aviso(s) acima merecem revisão.")
     print("\nNada foi alterado (dry-run)." if ops.dry else "\nPronto. Reinicie os clientes para carregar o MCP.")
@@ -500,8 +524,8 @@ def _resync(cfg: dict) -> None:
 def cmd_pin(args) -> int:
     cfg = load_config()
     for name in args.names:
-        if indexer.find_skill(name) is None:
-            print(f"! Skill '{name}' não encontrada; ignorada.")
+        if _resolve_skill_dir(name, set()) is None:
+            print(f"! Skill '{name}' não encontrada ou recusada por segurança; ignorada.")
         elif name not in cfg["pinned"]:
             cfg["pinned"].append(name)
     _resync(cfg)
@@ -523,11 +547,48 @@ def cmd_restore(args) -> int:
     if not candidates or not candidates[-1].is_file():
         print("Nenhum backup com manifesto encontrado.")
         return 1
-    manifest = json.loads(candidates[-1].read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(candidates[-1].read_text(encoding="utf-8"))
+    except ValueError:
+        manifest = None
+    lists = ("skills_dirs", "registered", "moves")
+    if not isinstance(manifest, dict) or not all(isinstance(manifest.get(k, []), list) for k in lists):
+        print("Manifesto de backup inválido; nada foi restaurado.")
+        return 1
     ops = Ops(args.dry_run)
-    ops.log(f"Restaurando a partir de {candidates[-1].parent}")
+    backup_dir = candidates[-1].parent
+    # O backup tem de ser uma pasta real, direto em ~/.ai-skills/backups, com `files/` real.
+    real_root = os.path.realpath(root)
+    for folder in (backup_dir, backup_dir / "files"):
+        expected = os.path.join(real_root, os.path.relpath(folder, root))
+        if folder.is_symlink() or (folder.exists() and os.path.realpath(folder) != expected):
+            print(f"Backup recusado: {folder} é um symlink ou aponta para fora de {root}.")
+            return 1
+    ops.log(f"Restaurando a partir de {backup_dir}")
+
+    # O manifesto é um arquivo local editável: só aceitamos o que o init poderia ter gravado.
+    known_dirs = {rel for c in CLIENTS for rel in c.skills_dirs}
+    known_mcp = {(c.mcp[0], str(Path.home() / c.mcp[1])) for c in CLIENTS if c.mcp}
+
+    real_backup = os.path.realpath(backup_dir / "files")
+    client_dirs = {str(Path.home() / rel) for rel in known_dirs}
+
+    def valid_move(move) -> bool:
+        """O init só move filhos diretos das pastas de skills dos clientes para o backup."""
+        if not isinstance(move, dict) or not all(isinstance(move.get(k), str) for k in ("from", "to")):
+            return False
+        src, dst = move["to"], move["from"]
+        if os.path.abspath(src) != src or os.path.abspath(dst) != dst:
+            return False
+        if os.path.dirname(dst) not in client_dirs or os.path.islink(os.path.dirname(dst)):
+            return False                                        # nunca gravar através de symlink
+        real_parent = os.path.realpath(os.path.dirname(src))   # pega symlink dentro do backup
+        return real_parent == real_backup or real_parent.startswith(real_backup + os.sep)
 
     for rel in manifest.get("skills_dirs", []):
+        if not isinstance(rel, str) or rel not in known_dirs:
+            ops.warn(f"Pasta de skills desconhecida no manifesto, ignorada: {rel}")
+            continue
         folder = Path.home() / rel
         if folder.is_symlink() and _is_managed(folder):
             ops.log(f"Remove link {folder}")
@@ -539,10 +600,17 @@ def cmd_restore(args) -> int:
                     if not ops.dry:
                         entry.unlink()
     for reg in manifest.get("registered", []):
+        valid = isinstance(reg, dict) and isinstance(reg.get("kind"), str) and isinstance(reg.get("path"), str)
+        if not valid or (reg["kind"], reg["path"]) not in known_mcp:
+            ops.warn(f"Registro MCP desconhecido no manifesto, ignorado: {reg!r:.80}")
+            continue
         set_registration(ops, reg["kind"], Path(reg["path"]), None)
         ops.log(f"MCP removido de {reg['path']}")
     restored = 0
     for move in reversed(manifest.get("moves", [])):
+        if not valid_move(move):
+            ops.warn(f"Entrada de manifesto fora do padrão do init, ignorada: {move!r:.100}")
+            continue
         src, dst = Path(move["to"]), Path(move["from"])
         if os.path.lexists(dst) or not os.path.lexists(src):
             ops.warn(f"Não restaurado (destino ocupado ou backup ausente): {dst}")
@@ -582,6 +650,8 @@ def cmd_search(args) -> int:
 def cmd_reindex(_args) -> int:
     data = indexer.build_index()
     print(f"{len(data['skills'])} skills indexadas em {indexer.index_path()}")
+    for item in data.get("unsafe_ignored", []):
+        print(f"! Skill NÃO indexada ({item['reason']}): {item['path']}")
     return 0
 
 

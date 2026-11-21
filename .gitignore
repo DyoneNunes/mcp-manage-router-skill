@@ -11,6 +11,9 @@ build/
 .pytest_cache/
 .ruff_cache/
 
+# Relatórios de auditoria (ficam só na máquina)
+docs/security/
+
 # Rascunhos e dados locais
 drafts/
 backups/

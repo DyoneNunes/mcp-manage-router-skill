@@ -13,7 +13,9 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
+import tempfile
 import time
 import unicodedata
 from collections import Counter
@@ -22,6 +24,10 @@ from pathlib import Path
 import yaml
 
 INDEX_VERSION = 1
+MAX_SKILL_BYTES = 512 * 1024      # teto de leitura de um SKILL.md
+MAX_FRONTMATTER_BYTES = 16 * 1024  # frontmatter maior que isso não passa pelo parser YAML
+MAX_YAML_DEPTH = 32                # aninhamento de [ ] / { } aceito no frontmatter
+MAX_TAGS = 20
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 _FRONTMATTER = re.compile(r"\A﻿?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
@@ -85,18 +91,40 @@ def validate_name(name: str) -> str:
 # --------------------------------------------------------------------------- #
 # Frontmatter
 # --------------------------------------------------------------------------- #
+class _NoAliasLoader(yaml.SafeLoader):
+    """SafeLoader que recusa aliases: frontmatter de skill não precisa deles, e é por
+    eles (inclusive via merge key `<<`) que bombas de expansão travam o parser."""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            raise yaml.YAMLError("aliases YAML não são aceitos em frontmatter de skill")
+        return super().compose_node(parent, index)
+
+
+def _too_deep(raw: str) -> bool:
+    depth = 0
+    for ch in raw:
+        if ch in "[{":
+            depth += 1
+            if depth > MAX_YAML_DEPTH:
+                return True
+        elif ch in "]}" and depth:
+            depth -= 1
+    return False
+
+
 def _loose_parse(raw: str) -> dict:
-    """Fallback para frontmatter que não é YAML válido (ex.: ':' sem aspas)."""
-    meta: dict[str, str] = {}
+    """Fallback linear para frontmatter que não é YAML válido (ex.: ':' sem aspas)."""
+    parts: dict[str, list[str]] = {}
     key = None
     for line in raw.splitlines():
         m = _LOOSE_KEY.match(line)
         if m:
             key, value = m.group(1), m.group(2).strip()
-            meta[key] = "" if value in (">", ">-", "|", "|-") else value.strip("\"'")
+            parts[key] = [] if value in (">", ">-", "|", "|-") else [value.strip("\"'")]
         elif key and line.startswith((" ", "\t")):
-            meta[key] = (meta[key] + " " + line.strip()).strip()
-    return meta
+            parts[key].append(line.strip())
+    return {k: " ".join(v).strip() for k, v in parts.items()}
 
 
 def parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -105,9 +133,11 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     if not m:
         return {}, text
     raw, body = m.group(1), text[m.end():]
+    if len(raw) > MAX_FRONTMATTER_BYTES or _too_deep(raw):
+        return _loose_parse(raw[:MAX_FRONTMATTER_BYTES]), body
     try:
-        meta = yaml.safe_load(raw)
-    except yaml.YAMLError:
+        meta = yaml.load(raw, Loader=_NoAliasLoader)  # noqa: S506 - subclasse de SafeLoader
+    except Exception:  # noqa: BLE001 - YAML inválido, data impossível, aninhamento absurdo...
         meta = _loose_parse(raw)
     return (meta if isinstance(meta, dict) else {}), body
 
@@ -120,6 +150,13 @@ def _first_paragraph(body: str, limit: int = 300) -> str:
     return ""
 
 
+def _scalar(value) -> str:
+    """Só escalares viram texto. Listas/dicts (ex.: bomba de aliases YAML) são ignorados."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return ""
+    return str(value)
+
+
 def _tags(meta: dict) -> list[str]:
     nested = meta.get("metadata") if isinstance(meta.get("metadata"), dict) else {}
     raw = meta.get("tags") or meta.get("keywords") or nested.get("tags") or []
@@ -127,16 +164,73 @@ def _tags(meta: dict) -> list[str]:
         raw = re.split(r"[,;]", raw)
     if not isinstance(raw, list):
         return []
-    return [str(t).strip() for t in raw if str(t).strip()]
+    tags = (_scalar(t).strip()[:50] for t in raw[:MAX_TAGS * 2])
+    return [t for t in tags if t][:MAX_TAGS]
+
+
+def read_text_capped(path: Path, limit: int = MAX_SKILL_BYTES) -> tuple[str, bool]:
+    """Lê no máximo `limit` bytes. Devolve (texto, truncado?)."""
+    with open(path, "rb") as fh:
+        raw = fh.read(limit + 1)
+    return raw[:limit].decode("utf-8", errors="replace"), len(raw) > limit
+
+
+def resolve_skill_file(path: str | Path) -> Path:
+    """Valida que `path` é um SKILL.md legítimo do diretório oficial e devolve o arquivo real.
+
+    Contenção estrita: depois de resolver todos os symlinks, o arquivo precisa estar
+    dentro do diretório oficial, ser um arquivo regular e não ter hardlinks. Isso barra
+    índice adulterado, SKILL.md/pasta/pasta intermediária que apontem para fora, FIFOs e
+    hardlinks para arquivos alheios. Symlinks internos ao diretório continuam valendo.
+    """
+    p = Path(path)
+    try:
+        rel = p.relative_to(skills_dir())
+    except ValueError:
+        raise ValueError("caminho fora do diretório oficial de skills") from None
+    if p.name != "SKILL.md" or ".." in rel.parts or len(rel.parts) not in (2, 4):
+        raise ValueError("caminho de skill inválido")
+    real_root = os.path.realpath(skills_dir())
+    real = os.path.realpath(p)
+    if not real.startswith(real_root + os.sep):
+        raise ValueError("aponta (via symlink) para fora do diretório oficial de skills")
+    try:
+        info = os.stat(real)
+    except OSError:
+        raise ValueError("arquivo inacessível ou symlink quebrado") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("não é um arquivo regular")
+    if info.st_nlink > 1:
+        raise ValueError("tem hardlinks; copie o arquivo para dentro da skill")
+    return Path(real)
+
+
+def atomic_write(path: Path, text: str, mode: int = 0o600) -> None:
+    """Grava por arquivo temporário exclusivo (0600) + rename.
+
+    Nunca escreve *através* do destino: se ele for symlink, hardlink ou FIFO, é
+    substituído, e o alvo original fica intacto.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            os.fchmod(fh.fileno(), mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def read_skill(skill_md: Path) -> dict:
     """Metadados leves de um SKILL.md: name, description, tags, path."""
-    text = skill_md.read_text(encoding="utf-8", errors="replace")
+    text, _ = read_text_capped(skill_md)
     meta, body = parse_frontmatter(text)
-    name = str(meta.get("name") or skill_md.parent.name).strip()
-    description = meta.get("description")
-    description = " ".join(str(description).split()) if description else _first_paragraph(body)
+    name = (_scalar(meta.get("name")) or skill_md.parent.name).strip()[:128]
+    description = " ".join(_scalar(meta.get("description")).split()) or _first_paragraph(body)
     return {
         "name": name,
         "description": description[:1024],
@@ -148,21 +242,41 @@ def read_skill(skill_md: Path) -> dict:
 # --------------------------------------------------------------------------- #
 # Indexação
 # --------------------------------------------------------------------------- #
-def iter_skill_files(root: Path | None = None):
-    """SKILL.md de cada skill: ``<skill>/SKILL.md`` e ``<pacote>/skills/<sub>/SKILL.md``."""
-    root = root or skills_dir()
-    if not root.is_dir():
-        return
+def _candidates(root: Path):
     for entry in sorted(root.iterdir()):
         if entry.name.startswith(".") or not entry.is_dir():
             continue
-        if (entry / "SKILL.md").is_file():
-            yield entry / "SKILL.md"
+        yield entry / "SKILL.md"
         nested = entry / "skills"
         if nested.is_dir():
             for sub in sorted(nested.iterdir()):
-                if sub.is_dir() and (sub / "SKILL.md").is_file():
+                if sub.is_dir():
                     yield sub / "SKILL.md"
+
+
+def iter_skill_files(root: Path | None = None, rejected: list | None = None):
+    """SKILL.md de cada skill: ``<skill>/SKILL.md`` e ``<pacote>/skills/<sub>/SKILL.md``.
+
+    No diretório oficial, cada arquivo passa por `resolve_skill_file`; os recusados não
+    são indexados e, se `rejected` for dado, entram nele com o motivo.
+    """
+    root = root or skills_dir()
+    if not root.is_dir():
+        return
+    official = root == skills_dir()
+    for candidate in _candidates(root):
+        if not os.path.lexists(candidate):
+            continue
+        if official:
+            try:
+                resolve_skill_file(candidate)
+            except ValueError as exc:
+                if rejected is not None:
+                    rejected.append({"path": str(candidate), "reason": str(exc)})
+                continue
+        elif not candidate.is_file():
+            continue
+        yield candidate
 
 
 def fingerprint(root: Path | None = None) -> str:
@@ -175,8 +289,8 @@ def fingerprint(root: Path | None = None) -> str:
 
 
 def build_index() -> dict:
-    skills, seen, duplicates = [], set(), []
-    for f in iter_skill_files():
+    skills, seen, duplicates, rejected = [], set(), [], []
+    for f in iter_skill_files(rejected=rejected):
         entry = read_skill(f)
         key = entry["name"].lower()
         if key in seen:
@@ -192,21 +306,33 @@ def build_index() -> dict:
     }
     if duplicates:
         data["duplicates_ignored"] = duplicates
+    if rejected:
+        data["unsafe_ignored"] = rejected
     target = index_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, target)
+    atomic_write(target, json.dumps(data, ensure_ascii=False, indent=1), 0o644)
     return data
+
+
+def _valid_entry(entry) -> bool:
+    return (
+        isinstance(entry, dict)
+        and all(isinstance(entry.get(k), str) for k in ("name", "description", "path"))
+        and isinstance(entry.get("tags"), list)
+        and all(isinstance(t, str) for t in entry["tags"])
+    )
 
 
 def load_index() -> dict | None:
     try:
         data = json.loads(index_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     if not isinstance(data, dict) or data.get("version") != INDEX_VERSION:
         return None
+    skills = data.get("skills")
+    if not isinstance(skills, list) or not all(_valid_entry(e) for e in skills):
+        return None   # índice corrompido ou adulterado: será reconstruído
     return data
 
 
