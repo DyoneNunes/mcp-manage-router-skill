@@ -1,6 +1,6 @@
 [project]
 name = "mcp-manage-router-skill"
-version = "0.1.0"
+version = "1.0.0"
 description = "MCP Server + Meta-Skill de roteamento de skills: indexa, busca e sugere skills locais sem estourar a janela de contexto."
 readme = "README.md"
 requires-python = ">=3.10"
