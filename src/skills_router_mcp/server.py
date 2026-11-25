@@ -15,10 +15,11 @@ from . import indexer
 mcp = FastMCP(
     "skills-router",
     instructions=(
-        "Roteador de skills locais. Antes de tarefas de desenvolvimento, arquitetura ou "
-        "automação, chame search_installed_skills e carregue com get_skill_content apenas "
-        "as skills escolhidas. Novas skills só entram como rascunho (propose_skill_draft) e "
-        "só são promovidas (promote_draft) com aprovação explícita do humano."
+        "Local skills router. On any development, architecture, infrastructure or automation "
+        "task, your FIRST action is search_installed_skills with 2-5 English keywords; then load "
+        "only the chosen skills with get_skill_content. Skip it for small talk and factual "
+        "questions. New skills enter only as drafts (propose_skill_draft) and are promoted "
+        "(promote_draft) only after the human explicitly approves that draft."
     ),
 )
 

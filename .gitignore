@@ -27,3 +27,6 @@ scratch/
 .idea/
 .vscode/
 .DS_Store
+
+# Pacote da skill para o marketplace (gerado a partir de skills-router-mcp-package/)
+skills-router-mcp.zip

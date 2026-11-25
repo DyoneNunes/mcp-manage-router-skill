@@ -24,6 +24,28 @@ from . import indexer
 
 SERVER_NAME = "skills-router"
 ORCHESTRATOR = "skill-orchestrator"
+SELF_SKILL = "skills-router-mcp"   # pacote-guia de instalação: fica nativo para não sumir no meio do setup
+
+# Ativação automática. Uma skill é só uma descrição que o modelo pode ignorar; em teste, só um
+# lembrete injetado a cada mensagem (hook) ou uma regra global fez o agente buscar antes de agir.
+ACTIVATION_MARK = "[skills-router]"
+ACTIVATION_TEXT = (
+    f"{ACTIVATION_MARK} If this is a development, architecture, infrastructure or automation task, "
+    "your FIRST action must be search_installed_skills (MCP skills-router) with 2-5 English keywords; "
+    "load matches with get_skill_content. Skip for small talk."
+)
+HOOK_COMMAND = "echo " + shlex.quote(ACTIVATION_TEXT)
+RULE_START = "<!-- skills-router:start (gerenciado por `skills-router init`; removido por `skills-router restore`) -->"
+RULE_END = "<!-- skills-router:end -->"
+RULE_BLOCK = (
+    f"{RULE_START}\n"
+    "## Skills router\n\n"
+    "Before any development, architecture, infrastructure or automation task, your first action is\n"
+    "`search_installed_skills` (MCP server `skills-router`) with 2-5 English keywords; then load only\n"
+    "the matching skills with `get_skill_content`. Skip it for small talk and factual questions.\n"
+    f"{RULE_END}\n"
+)
+_RULE_RE = re.compile(r"\n*<!-- skills-router:start.*?<!-- skills-router:end -->\n?", re.S)
 
 
 @dataclass(frozen=True)
@@ -34,21 +56,23 @@ class Client:
     binaries: tuple[str, ...]
     skills_dirs: tuple[str, ...]      # pastas de skills (relativas à home)
     mcp: tuple[str, str] | None       # (formato, arquivo relativo à home)
+    activation: tuple[str, str] | None = None   # ("claude_hook" | "rules", arquivo relativo à home)
 
 
 CLIENTS: tuple[Client, ...] = (
     Client("claude", "Claude Code", (".claude",), ("claude",), (".claude/skills",),
-           ("claude", ".claude.json")),
+           ("claude", ".claude.json"), ("claude_hook", ".claude/settings.json")),
     Client("gemini", "Gemini CLI", (".gemini",), ("gemini",), (".gemini/skills",),
-           ("mcpServers", ".gemini/settings.json")),
+           ("mcpServers", ".gemini/settings.json"), ("rules", ".gemini/GEMINI.md")),
     Client("cursor", "Cursor", (".cursor",), ("cursor", "cursor-agent"), (".cursor/skills",),
-           ("mcpServers", ".cursor/mcp.json")),
+           ("mcpServers", ".cursor/mcp.json")),   # regras globais do Cursor ficam na UI: ativação manual
     Client("codex", "Codex CLI", (".codex",), ("codex",), (".codex/skills",),
-           ("codex", ".codex/config.toml")),
+           ("codex", ".codex/config.toml"), ("rules", ".codex/AGENTS.md")),
     Client("opencode", "opencode", (".config/opencode",), ("opencode",), (".config/opencode/skills",),
-           ("opencode", ".config/opencode/opencode.json")),
+           ("opencode", ".config/opencode/opencode.json"), ("rules", ".config/opencode/AGENTS.md")),
     Client("antigravity", "Antigravity", (".gemini/config/mcp_config.json",), (),
-           (".gemini/config/skills",), ("mcpServers", ".gemini/config/mcp_config.json")),
+           (".gemini/config/skills",), ("mcpServers", ".gemini/config/mcp_config.json"),
+           ("rules", ".gemini/GEMINI.md")),
     Client("agents", "~/.agents (compartilhado)", (".agents/skills",), (), (".agents/skills",), None),
 )
 
@@ -111,8 +135,14 @@ def server_command(override: str | None = None) -> list[str]:
 class Ops:
     def __init__(self, dry: bool):
         self.dry = dry
-        self.backup_root = indexer.home() / "backups" / time.strftime("%Y%m%d-%H%M%S")
-        self.manifest: dict = {"moves": [], "skills_dirs": [], "registered": [], "config_backups": []}
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        root, n = indexer.home() / "backups", 1
+        self.backup_root = root / stamp
+        while os.path.lexists(self.backup_root):   # dois inits no mesmo segundo não dividem a pasta
+            n += 1
+            self.backup_root = root / f"{stamp}-{n}"
+        self.manifest: dict = {"moves": [], "skills_dirs": [], "registered": [], "config_backups": [],
+                               "activation": []}
         self.warnings: list[str] = []
 
     def log(self, msg: str) -> None:
@@ -167,7 +197,7 @@ class Ops:
         self.manifest["config_backups"].append({"from": str(original), "to": str(dest)})
 
     def save_manifest(self) -> None:
-        touched = any(self.manifest[k] for k in ("moves", "registered", "config_backups"))
+        touched = any(self.manifest[k] for k in ("moves", "registered", "config_backups", "activation"))
         if self.dry or not touched:
             return
         self._secure_backup_root()
@@ -358,17 +388,29 @@ def _write_text(path: Path, text: str) -> None:
     indexer.atomic_write(path, text, mode)
 
 
-def _edit_json(ops: Ops, path: Path, section: str, value: dict | None) -> bool:
-    """Define (ou remove, se value=None) section[SERVER_NAME] num JSON. True se mudou."""
-    data: dict = {}
-    if path.is_file() and path.read_text(encoding="utf-8").strip():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
-            ops.warn(f"{path} não é JSON puro; registre o servidor manualmente.")
-            return False
-        if not isinstance(data, dict):
-            return False
+def _load_json_dict(ops: Ops, path: Path, hint: str) -> dict | None:
+    """Conteúdo de um JSON de config ({} se ausente/vazio), ou None (com aviso) se não for JSON puro."""
+    if not (path.is_file() and path.read_text(encoding="utf-8").strip()):
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        ops.warn(f"{path} não é JSON puro; {hint}")
+        return None
+    if not isinstance(data, dict):
+        ops.warn(f"{path} não é um objeto JSON; {hint}")
+        return None
+    return data
+
+
+def _edit_json(ops: Ops, path: Path, section: str, value: dict | None) -> bool | None:
+    """Define (ou remove, se value=None) section[SERVER_NAME] num JSON.
+
+    True se mudou, False se já estava assim, None se não deu para editar (aviso já emitido).
+    """
+    data = _load_json_dict(ops, path, "registre o servidor manualmente.")
+    if data is None:
+        return None
     servers = data.get(section)
     if not isinstance(servers, dict):
         servers = {}
@@ -410,7 +452,7 @@ def _edit_codex(ops: Ops, path: Path, cmd: list[str] | None) -> bool:
     return True
 
 
-def _edit_claude(ops: Ops, path: Path, cmd: list[str] | None) -> bool:
+def _edit_claude(ops: Ops, path: Path, cmd: list[str] | None) -> bool | None:
     """Prefere a CLI oficial (o ~/.claude.json é regravado pelo Claude Code em uso)."""
     exe = shutil.which("claude")
     if not exe:
@@ -427,11 +469,11 @@ def _edit_claude(ops: Ops, path: Path, cmd: list[str] | None) -> bool:
                           capture_output=True, text=True, timeout=60)
     if done.returncode != 0:
         ops.warn(f"`claude mcp add` falhou: {(done.stderr or done.stdout).strip()[:200]}")
-        return False
+        return None
     return True
 
 
-def set_registration(ops: Ops, kind: str, path: Path, cmd: list[str] | None) -> bool:
+def set_registration(ops: Ops, kind: str, path: Path, cmd: list[str] | None) -> bool | None:
     if kind == "claude":
         return _edit_claude(ops, path, cmd)
     if kind == "codex":
@@ -454,9 +496,118 @@ def register_all(ops: Ops, clients: list[Client], cmd: list[str]) -> None:
         except (OSError, subprocess.SubprocessError) as exc:
             ops.warn(f"{client.label}: falha ao registrar MCP em {path}: {exc}")
             continue
+        if changed is None:   # não editável (JSONC, CLI falhou): o aviso já explicou
+            continue
         if changed:
             ops.manifest["registered"].append({"client": client.key, "kind": kind, "path": str(path)})
         ops.log(f"{client.label}: MCP '{SERVER_NAME}' {'registrado' if changed else 'já estava registrado'} em ~/{rel}")
+
+
+# --------------------------------------------------------------------------- #
+# Ativação automática: hook (Claude Code) ou bloco de regra global (demais clientes)
+# --------------------------------------------------------------------------- #
+def _is_our_hook_group(group) -> bool:
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    return isinstance(hooks, list) and any(
+        isinstance(h, dict) and ACTIVATION_MARK in str(h.get("command", "")) for h in hooks)
+
+
+def _edit_claude_hook(ops: Ops, path: Path, enable: bool) -> bool | None:
+    """Liga/desliga o hook UserPromptSubmit em ~/.claude/settings.json sem tocar nos demais."""
+    data = _load_json_dict(ops, path, "adicione o hook de ativação manualmente (veja o SKILL.md).")
+    if data is None:
+        return None
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        ops.warn(f"{path}: 'hooks' tem formato inesperado; adicione o hook manualmente.")
+        return None
+    groups = hooks.get("UserPromptSubmit", [])
+    if not isinstance(groups, list):
+        ops.warn(f"{path}: 'hooks.UserPromptSubmit' tem formato inesperado; adicione o hook manualmente.")
+        return None
+    new = [g for g in groups if not _is_our_hook_group(g)]
+    if enable:
+        new.append({"hooks": [{"type": "command", "command": HOOK_COMMAND}]})
+    if new == groups:
+        return False
+    if new:
+        hooks["UserPromptSubmit"] = new
+    else:
+        hooks.pop("UserPromptSubmit", None)
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks", None)
+    if not ops.dry:
+        if enable:
+            ops.backup_file(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return True
+
+
+def _edit_rules(ops: Ops, path: Path, enable: bool) -> bool:
+    """Acrescenta/remove o bloco gerenciado num arquivo de regras global (GEMINI.md, AGENTS.md)."""
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    found = _RULE_RE.search(text)
+    if not enable:
+        if not found:
+            return False           # arquivo do usuário sem bloco nosso: nunca é reescrito
+        new = _RULE_RE.sub("\n", text).strip("\n")
+        new = new + "\n" if new else ""
+    else:
+        if found and found.group(0).strip("\n") == RULE_BLOCK.strip("\n"):
+            return False
+        base = (_RULE_RE.sub("\n", text) if found else text).rstrip("\n")
+        new = base + ("\n\n" if base else "") + RULE_BLOCK
+    if not ops.dry:
+        if enable:
+            ops.backup_file(path)
+        if not new.strip():
+            path.unlink(missing_ok=True)   # o arquivo só tinha o nosso bloco
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text(path, new)
+    return True
+
+
+def set_activation(ops: Ops, kind: str, path: Path, enable: bool) -> bool | None:
+    if kind == "claude_hook":
+        return _edit_claude_hook(ops, path, enable)
+    return _edit_rules(ops, path, enable)
+
+
+def activation_targets(clients) -> list[tuple[Client, str, Path]]:
+    """(cliente, tipo, arquivo) sem repetir arquivo (Gemini CLI e Antigravity dividem o GEMINI.md)."""
+    seen, out = set(), []
+    for client in clients:
+        if client.activation is None:
+            continue
+        kind, rel = client.activation
+        path = Path.home() / rel
+        if path not in seen:
+            seen.add(path)
+            out.append((client, kind, path))
+    return out
+
+
+def activate_all(ops: Ops, clients: list[Client]) -> None:
+    for client, kind, path in activation_targets(clients):
+        try:
+            changed = set_activation(ops, kind, path, True)
+        except OSError as exc:
+            ops.warn(f"{client.label}: falha ao configurar a ativação em {path}: {exc}")
+            continue
+        if changed is None:
+            continue
+        if changed:
+            ops.manifest["activation"].append({"client": client.key, "kind": kind, "path": str(path)})
+        what = "hook UserPromptSubmit" if kind == "claude_hook" else "regra global"
+        rel = path.relative_to(Path.home())
+        ops.log(f"{client.label}: ativação automática ({what}) {'configurada' if changed else 'já estava configurada'} em ~/{rel}")
+    if any(c.key == "cursor" for c in clients):
+        ops.warn("Cursor: as regras globais ficam na interface. Para a ativação automática, cole a regra "
+                 "do SKILL.md em Settings → Rules → User Rules.")
 
 
 # --------------------------------------------------------------------------- #
@@ -486,6 +637,15 @@ def cmd_init(args) -> int:
             shutil.copy2(source, dest)
 
     _, pending = migrate(ops, clients)
+    # O pacote-guia (skills-router-mcp) acabou de ser importado: sem o pin ele sumiria da pasta do
+    # cliente no meio do setup e os caminhos relativos dele quebrariam. Só na primeira vez, para
+    # respeitar um `unpin` posterior.
+    self_present = SELF_SKILL in pending or (indexer.skills_dir() / SELF_SKILL / "SKILL.md").is_file()
+    if self_present and SELF_SKILL not in cfg["pinned"] and not cfg.get("self_pinned"):
+        cfg["pinned"].append(SELF_SKILL)
+        cfg["self_pinned"] = True
+        ops.log(f"Mantém '{SELF_SKILL}' nativa para o guia de instalação continuar acessível "
+                f"(depois do setup: `skills-router unpin {SELF_SKILL}`).")
     # Skills extras que acompanham o pacote: só entram se ainda não existirem,
     # para nunca sobrescrever uma versão que o usuário já tenha ou tenha editado.
     for extra in sorted(template_dir().iterdir()):
@@ -501,6 +661,10 @@ def cmd_init(args) -> int:
     cmd = server_command(args.server_command)
     ops.log(f"Comando do servidor MCP: {' '.join(cmd)}")
     register_all(ops, clients, cmd)
+    if args.no_activation:
+        ops.log("Ativação automática não configurada (--no-activation).")
+    else:
+        activate_all(ops, clients)
 
     if not ops.dry:
         config_path().write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
@@ -539,37 +703,29 @@ def cmd_unpin(args) -> int:
     return 0
 
 
-def cmd_restore(args) -> int:
-    root = indexer.home() / "backups"
-    candidates = sorted(p for p in root.glob("*/manifest.json")) if root.is_dir() else []
-    if args.backup:
-        candidates = [root / args.backup / "manifest.json"]
-    if not candidates or not candidates[-1].is_file():
-        print("Nenhum backup com manifesto encontrado.")
-        return 1
+def _restore_manifest(ops: Ops, manifest_path: Path, root: Path) -> int | None:
+    """Desfaz um manifesto. Devolve itens devolvidos ao lugar, ou None se o backup foi recusado."""
     try:
-        manifest = json.loads(candidates[-1].read_text(encoding="utf-8"))
-    except ValueError:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         manifest = None
     lists = ("skills_dirs", "registered", "moves")
     if not isinstance(manifest, dict) or not all(isinstance(manifest.get(k, []), list) for k in lists):
-        print("Manifesto de backup inválido; nada foi restaurado.")
-        return 1
-    ops = Ops(args.dry_run)
-    backup_dir = candidates[-1].parent
+        ops.warn(f"Manifesto inválido, ignorado: {manifest_path}")
+        return None
+    backup_dir = manifest_path.parent
     # O backup tem de ser uma pasta real, direto em ~/.ai-skills/backups, com `files/` real.
     real_root = os.path.realpath(root)
     for folder in (backup_dir, backup_dir / "files"):
         expected = os.path.join(real_root, os.path.relpath(folder, root))
         if folder.is_symlink() or (folder.exists() and os.path.realpath(folder) != expected):
-            print(f"Backup recusado: {folder} é um symlink ou aponta para fora de {root}.")
-            return 1
+            ops.warn(f"Backup recusado: {folder} é um symlink ou aponta para fora de {root}.")
+            return None
     ops.log(f"Restaurando a partir de {backup_dir}")
 
     # O manifesto é um arquivo local editável: só aceitamos o que o init poderia ter gravado.
     known_dirs = {rel for c in CLIENTS for rel in c.skills_dirs}
     known_mcp = {(c.mcp[0], str(Path.home() / c.mcp[1])) for c in CLIENTS if c.mcp}
-
     real_backup = os.path.realpath(backup_dir / "files")
     client_dirs = {str(Path.home() / rel) for rel in known_dirs}
 
@@ -604,8 +760,8 @@ def cmd_restore(args) -> int:
         if not valid or (reg["kind"], reg["path"]) not in known_mcp:
             ops.warn(f"Registro MCP desconhecido no manifesto, ignorado: {reg!r:.80}")
             continue
-        set_registration(ops, reg["kind"], Path(reg["path"]), None)
-        ops.log(f"MCP removido de {reg['path']}")
+        if set_registration(ops, reg["kind"], Path(reg["path"]), None):
+            ops.log(f"MCP removido de {reg['path']}")
     restored = 0
     for move in reversed(manifest.get("moves", [])):
         if not valid_move(move):
@@ -619,6 +775,35 @@ def cmd_restore(args) -> int:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
         restored += 1
+    if not ops.dry:   # um manifesto desfeito não é desfeito de novo num próximo restore
+        manifest_path.rename(manifest_path.with_name("manifest.restored.json"))
+    return restored
+
+
+def cmd_restore(args) -> int:
+    """Sem --backup, desfaz TODOS os inits (do mais novo ao mais antigo): rodar o init de novo
+    para corrigir algo não pode prender no backup o que o primeiro init moveu."""
+    root = indexer.home() / "backups"
+    if args.backup:
+        candidates = [root / args.backup / "manifest.json"]
+    else:
+        candidates = sorted((p for p in root.glob("*/manifest.json")), reverse=True) if root.is_dir() else []
+    candidates = [c for c in candidates if c.is_file()]
+    if not candidates:
+        print("Nenhum backup com manifesto pendente encontrado.")
+        return 1
+    ops = Ops(args.dry_run)
+    restored = 0
+    for manifest_path in candidates:
+        result = _restore_manifest(ops, manifest_path, root)
+        restored += result or 0
+    # A ativação é identificada pelo marcador, então sai de todos os alvos conhecidos.
+    for client, kind, path in activation_targets(CLIENTS):
+        try:
+            if set_activation(ops, kind, path, False):
+                ops.log(f"Ativação automática removida de {path}")
+        except OSError as exc:
+            ops.warn(f"{client.label}: falha ao remover a ativação de {path}: {exc}")
     ops.log(f"Itens devolvidos ao lugar original: {restored}")
     print(f"As cópias em {indexer.skills_dir()} foram mantidas.")
     return 0
@@ -689,6 +874,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--expose", choices=("pinned", "all"), help="pinned: só orquestrador + fixadas (padrão); all: pasta inteira via symlink")
     p.add_argument("--clients", help="lista separada por vírgula: " + ",".join(c.key for c in CLIENTS))
     p.add_argument("--server-command", help="comando completo para subir o servidor MCP")
+    p.add_argument("--no-activation", action="store_true",
+                   help="não instala o hook (Claude Code) nem as regras globais que fazem o agente buscar sozinho")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("serve", help="sobe o servidor MCP (stdio)")
@@ -713,7 +900,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.set_defaults(func=cmd_promote)
     p = sub.add_parser("restore", help="desfaz o init: remove links/registro e devolve os originais")
-    p.add_argument("--backup", help="nome da pasta em ~/.ai-skills/backups (padrão: o mais recente)")
+    p.add_argument("--backup", help="desfaz só esta pasta de ~/.ai-skills/backups (padrão: todas as pendentes, da mais nova à mais antiga)")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_restore)
 

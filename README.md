@@ -143,7 +143,23 @@ sequenceDiagram
 
 ## Início rápido
 
-Requer [uv](https://docs.astral.sh/uv/) e Python 3.10+.
+Requer [uv](https://docs.astral.sh/uv/) (traz o `uvx`), `git` e Python 3.10+. Linux ou macOS.
+
+**Sem instalar nada (zero-config, via `uvx`).** Fixe um commit (SHA completo, 40 caracteres):
+o servidor passa a subir offline a partir do cache, e o código só muda quando você trocar o pin.
+
+```bash
+SHA=$(git ls-remote https://github.com/DyoneNunes/mcp-manage-router-skill HEAD | cut -f1)
+URL="git+https://github.com/DyoneNunes/mcp-manage-router-skill@$SHA"
+
+uvx --from "$URL" skills-router init --dry-run --server-command "$(command -v uvx) --from $URL skills-router serve"
+uvx --from "$URL" skills-router init           --server-command "$(command -v uvx) --from $URL skills-router serve"
+```
+
+O `--server-command` é obrigatório nesse modo: sem ele, o `init` registraria o caminho
+temporário do cache do uv, que quebra quando o cache é limpo.
+
+**A partir de um clone** (para ler ou editar o código):
 
 ```bash
 git clone https://github.com/DyoneNunes/mcp-manage-router-skill.git
@@ -153,7 +169,17 @@ uv run skills-router init --dry-run   # mostra o que seria feito, sem alterar na
 uv run skills-router init             # executa
 ```
 
-Depois, reinicie os clientes para carregarem o servidor MCP e a nova lista de skills.
+Depois, reinicie os clientes para carregarem o servidor MCP, a ativação automática e a nova
+lista de skills.
+
+> [!NOTE]
+> **Ativação automática.** Uma skill é só uma descrição que o modelo pode ignorar: em testes
+> com o Claude Code, o orquestrador sozinho quase nunca fazia o agente buscar. Por isso o
+> `init` também instala um hook `UserPromptSubmit` no Claude Code (`~/.claude/settings.json`)
+> e um bloco de regra nos arquivos globais do Gemini CLI/Antigravity (`~/.gemini/GEMINI.md`),
+> Codex (`~/.codex/AGENTS.md`) e opencode (`~/.config/opencode/AGENTS.md`). Com o hook, o
+> agente buscou e carregou a skill certa em 4 de 4 pedidos de desenvolvimento. Cursor e Claude Desktop pedem um passo manual
+> (veja a skill `skills-router-mcp`). Use `--no-activation` para pular; o `restore` remove tudo.
 
 > [!IMPORTANT]
 > O `init` **move** as skills que já existem nas pastas dos seus clientes. Nada é apagado:
@@ -178,8 +204,13 @@ uv run skills-router init --pin minha-skill --pin outra-skill
    skills fixadas.
 6. Registra o servidor MCP `skills-router` na config global de cada cliente, com cópia de
    segurança do arquivo antes de editar.
-7. Instala as [skills incluídas](#skills-incluídas) que você ainda não tiver.
-8. Gera o `index.json` inicial.
+7. Configura a ativação automática (hook no Claude Code, bloco de regra gerenciado nos
+   demais), sem tocar no resto dos arquivos.
+8. Instala as [skills incluídas](#skills-incluídas) que você ainda não tiver.
+9. Gera o `index.json` inicial.
+
+Rodar o `init` de novo é seguro. O `skills-router restore` desfaz **todas** as execuções
+pendentes, da mais nova para a mais antiga.
 
 Itens que não são skills (pastas sem `SKILL.md`, diretórios ocultos) nunca são movidos. Se
 dois clientes tiverem skills homônimas com conteúdo diferente, a primeira é mantida e a
@@ -197,21 +228,22 @@ outra vai para `~/.ai-skills/conflicts/` para você decidir.
 | `--expose all` | A pasta do cliente vira symlink para `~/.ai-skills/skills` inteira. Unifica, mas não economiza contexto. |
 | `--clients claude,cursor` | Restringe os clientes tratados. |
 | `--server-command "..."` | Define o comando usado pelos clientes para subir o servidor. |
+| `--no-activation` | Não instala o hook nem as regras de ativação automática. |
 
 </details>
 
 <details>
 <summary><strong>🖥️ Clientes suportados (clique para expandir)</strong></summary>
 
-| Cliente | Pasta de skills | Config MCP |
-|---|---|---|
-| Claude Code | `~/.claude/skills` | `claude mcp add --scope user` (ou `~/.claude.json`) |
-| Gemini CLI | `~/.gemini/skills` | `~/.gemini/settings.json` |
-| Cursor | `~/.cursor/skills` | `~/.cursor/mcp.json` |
-| Codex CLI | `~/.codex/skills` | `~/.codex/config.toml` |
-| opencode | `~/.config/opencode/skills` | `~/.config/opencode/opencode.json` |
-| Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` |
-| `~/.agents` (compartilhado) | `~/.agents/skills` | não se aplica |
+| Cliente | Pasta de skills | Config MCP | Ativação automática |
+|---|---|---|---|
+| Claude Code | `~/.claude/skills` | `claude mcp add --scope user` (ou `~/.claude.json`) | hook em `~/.claude/settings.json` |
+| Gemini CLI | `~/.gemini/skills` | `~/.gemini/settings.json` | regra em `~/.gemini/GEMINI.md` |
+| Cursor | `~/.cursor/skills` | `~/.cursor/mcp.json` | manual (Settings → Rules → User Rules) |
+| Codex CLI | `~/.codex/skills` | `~/.codex/config.toml` | regra em `~/.codex/AGENTS.md` |
+| opencode | `~/.config/opencode/skills` | `~/.config/opencode/opencode.json` | regra em `~/.config/opencode/AGENTS.md` |
+| Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` | regra em `~/.gemini/GEMINI.md` |
+| `~/.agents` (compartilhado) | `~/.agents/skills` | não se aplica | não se aplica |
 
 </details>
 
