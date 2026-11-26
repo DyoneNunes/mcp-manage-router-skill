@@ -107,22 +107,26 @@ Show this table and ask. If the user has no preference, propose A with a pin.
 
 | Option | Command clients run | Trade-off |
 |---|---|---|
-| A. Zero-config, pinned (recommended) | `uvx --from git+https://github.com/DyoneNunes/mcp-manage-router-skill@<sha> skills-router serve` | No install. Works offline after the first start. Code changes only when the pin changes. |
-| A'. Zero-config, unpinned | the same URL without `@<sha>` | Auto-updates, but uv contacts GitHub on every start, the server fails offline, and each start runs whatever is on the default branch. |
+| A. Zero-config, pinned to release v1.0.0 (recommended) | `uvx --from <url> skills-router serve`, with `<url>` pinned as below | No install. Works offline after the first start. Code changes only when the pin changes. |
+| A'. Zero-config, unpinned | the same URL without `@...` | Auto-updates, but uv contacts GitHub on every start, the server fails offline, and each start runs whatever is on the default branch. |
 | B. Local checkout | `uv run --directory <checkout> skills-router serve` | The user can read and edit the code. Moving the folder breaks every client. |
 | C. Persistent install | `<absolute path>/skills-router serve` after `uv tool install git+https://github.com/DyoneNunes/mcp-manage-router-skill` | Fastest start, works offline, updates with `uv tool upgrade`. |
 
-For A, pin a full commit SHA (40 hex characters; a short SHA does not work offline). A pin
+For A, pin release **v1.0.0** by its full commit SHA,
+`01c3d46c332f8095e30791b0cf70ac8748504a09`. Never write `@v1.0.0` in a client config: uv
+re-resolves a tag (or a short SHA) against GitHub on every start, so the server fails offline,
+and a tag can be moved. A 40-character SHA reuses the cached build and cannot change. A pin
 prevents silent updates; it does not prove the code is safe. This code runs on every client
-start and sets the MCP `instructions` the model reads, so show the user the commit before
-pinning, and prefer one they have reviewed or a tagged release. The latest commit is:
+start and sets the MCP `instructions` the model reads, so show the user the release before
+pinning. To confirm the SHA behind the tag, or to find a newer release:
 
 ```bash
-git ls-remote https://github.com/DyoneNunes/mcp-manage-router-skill HEAD
+git ls-remote --tags https://github.com/DyoneNunes/mcp-manage-router-skill   # use the line ending in ^{}
 ```
 
-Below, `<url>` means `git+https://github.com/DyoneNunes/mcp-manage-router-skill@<sha>` for A,
-or the same without `@<sha>` for A'. With the user's approval, check that it runs:
+Below, `<url>` means
+`git+https://github.com/DyoneNunes/mcp-manage-router-skill@01c3d46c332f8095e30791b0cf70ac8748504a09`
+(v1.0.0) for A, or the same without `@...` for A'. With the user's approval, check that it runs:
 
 ```bash
 uvx --from <url> skills-router --help
@@ -460,7 +464,7 @@ Server and installer messages are in Portuguese. Match on the quoted fragment.
 |---|---|---|
 | Tools missing after setup | Client not restarted | Restart the client. Run `--probe` to confirm the server itself starts. |
 | Works in a terminal, not in Claude Desktop or Cursor | GUI app cannot see the shell PATH | Use the absolute path of `uvx`, `uv` or `skills-router` in `command`. |
-| `--probe` says `uv could not fetch the git source` | Unpinned uvx source (A') and no network | Restore the network, or pin a full commit SHA (1.2). |
+| `--probe` says `uv could not fetch the git source` | Unpinned (A') or tag-pinned (`@v1.0.0`) uvx source and no network | Restore the network, or pin the release's full commit SHA (1.2). |
 | `--probe` times out on first run | uv is cloning and building the package | Re-run with `--timeout 90`. |
 | `launcher: ephemeral-cache-path` | `init` ran under uvx without `--server-command` | Re-run `init` with `--server-command` (1.3). |
 | Every client broke at once | Checkout registered via `uv run --directory` was moved or deleted | Switch to A or C and re-run `init`, or fix `--directory`. |

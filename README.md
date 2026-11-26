@@ -145,11 +145,13 @@ sequenceDiagram
 
 Requer [uv](https://docs.astral.sh/uv/) (traz o `uvx`), `git` e Python 3.10+. Linux ou macOS.
 
-**Sem instalar nada (zero-config, via `uvx`).** Fixe um commit (SHA completo, 40 caracteres):
-o servidor passa a subir offline a partir do cache, e o código só muda quando você trocar o pin.
+**Sem instalar nada (zero-config, via `uvx`).** Fixe a release **v1.0.0** pelo SHA completo
+do commit dela (40 caracteres): o servidor passa a subir offline a partir do cache, e o código
+só muda quando você trocar o pin. Não use `@v1.0.0` direto: o uv resolve a tag no GitHub a
+cada início, e o servidor falha sem rede.
 
 ```bash
-SHA=$(git ls-remote https://github.com/DyoneNunes/mcp-manage-router-skill HEAD | cut -f1)
+SHA=01c3d46c332f8095e30791b0cf70ac8748504a09   # v1.0.0; confira com: git ls-remote --tags <repo> 'v1.0.0^{}'
 URL="git+https://github.com/DyoneNunes/mcp-manage-router-skill@$SHA"
 
 uvx --from "$URL" skills-router init --dry-run --server-command "$(command -v uvx) --from $URL skills-router serve"
