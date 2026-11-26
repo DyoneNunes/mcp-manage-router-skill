@@ -95,7 +95,7 @@ Show the user the `detail` lines that are not `ok`. Do not paste the whole JSON 
   stop and ask the user to install uv.
 - Python 3.10 or newer. `uv` can provision it.
 - `git`, because uv builds the package from the repository.
-- Linux or macOS. On Windows, use WSL.
+- Linux (tested) or macOS (supported, untested). On Windows, try WSL (untested).
 
 The package exposes one console script, `skills-router` (`[project.scripts]` points it at
 `skills_router_mcp.installer:main`). `skills-router serve` starts the MCP server; the other

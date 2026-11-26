@@ -143,7 +143,7 @@ sequenceDiagram
 
 ## Início rápido
 
-Requer [uv](https://docs.astral.sh/uv/) (traz o `uvx`), `git` e Python 3.10+. Linux ou macOS.
+Requer [uv](https://docs.astral.sh/uv/) (traz o `uvx`), `git` e Python 3.10+. Testado no Linux; macOS suportado, mas não testado.
 
 **Sem instalar nada (zero-config, via `uvx`).** Fixe a release **v1.0.0** pelo SHA completo
 do commit dela (40 caracteres): o servidor passa a subir offline a partir do cache, e o código
