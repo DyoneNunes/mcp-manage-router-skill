@@ -165,88 +165,26 @@ lines. Then ask:
 If the answers changed any flag, run the dry run again with those flags and show it. Only
 after the user approves that exact plan, run the same command without `--dry-run`.
 
-| Flag | Effect |
-|---|---|
-| `--dry-run` | Report only; change nothing. |
-| `--pin NAME` | Keep a skill native in every client (repeatable). Saved in `~/.ai-skills/config.json`. |
-| `--clients LIST` | Only these keys: `claude`, `gemini`, `cursor`, `codex`, `opencode`, `antigravity`, `agents`. |
-| `--server-command "..."` | Exact command clients run to start the server. Overrides `SKILLS_ROUTER_COMMAND`. |
-| `--no-activation` | Skip the hook and rule files of 1.6. The agent then searches only when it decides to. |
-| `--expose all` | Replace each client folder with a symlink to `~/.ai-skills/skills` (only folders that held nothing but skills; others stay in pinned mode). Unifies folders but saves no context. |
-
-What `init` does, in order:
-
-1. Creates `~/.ai-skills/{skills,drafts}` and installs `skill-orchestrator`.
-2. Imports each client's skills once (identical copies are deduplicated; a same-name skill with
-   different content goes to `~/.ai-skills/conflicts/<client>/<name>`).
-3. Moves the originals to `~/.ai-skills/backups/<timestamp>/files/` and writes a `manifest.json`.
-4. Leaves in each client folder only symlinks to the orchestrator, this guide and pinned skills.
-5. Registers the MCP server in each client config, backing up each file first.
-6. Configures automatic activation (1.6) unless `--no-activation`.
-7. Installs bundled skills the user does not have yet (currently `license-designer`) and
-   builds `index.json`.
+Every `init` flag, and what `init` does step by step, are listed in
+`reference/client-setup.md`.
 
 Running `init` again is safe: it skips what is already in place.
 
 ### 1.4 Where each client is wired
 
-| Client | Skills folder | MCP registration written by `init` | Activation written by `init` |
-|---|---|---|---|
-| Claude Code | `~/.claude/skills` | `claude mcp add --scope user skills-router -- <cmd>` (or `~/.claude.json` → `mcpServers`) | hook in `~/.claude/settings.json` |
-| Gemini CLI | `~/.gemini/skills` | `~/.gemini/settings.json` → `mcpServers` | rule block in `~/.gemini/GEMINI.md` |
-| Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/mcp_config.json` → `mcpServers` | rule block in `~/.gemini/GEMINI.md` |
-| Codex CLI | `~/.codex/skills` | `~/.codex/config.toml` → `[mcp_servers.skills-router]` | rule block in `~/.codex/AGENTS.md` |
-| opencode | `~/.config/opencode/skills` | `~/.config/opencode/opencode.json` → `mcp` | rule block in `~/.config/opencode/AGENTS.md` |
-| Cursor | `~/.cursor/skills` | `~/.cursor/mcp.json` → `mcpServers` | none: manual (1.6) |
-| Claude Desktop | none | none: manual (1.5) | none: manual (1.6) |
-| Shared `~/.agents/skills` | `~/.agents/skills` (read by agents that use that convention) | none | none |
+`init` writes the MCP entry and the activation trigger for Claude Code, Gemini CLI,
+Antigravity, Codex CLI and opencode, and the MCP entry for Cursor. Cursor activation and all of
+Claude Desktop are manual (1.5, 1.6). The per-client table of skills folders, config files and
+activation files is in `reference/client-setup.md`.
 
 ### 1.5 Manual registration
 
 Use this when `init` warned (for example `não é JSON puro`), for Claude Desktop, or for project
-scope. Ask before editing. Merge into the existing object; never replace the file. Replace
-`/abs/uvx` with the output of `command -v uvx` and `<url>` as in 1.2.
-
-Claude Code:
-
-```bash
-claude mcp add --scope user skills-router -- /abs/uvx --from <url> skills-router serve
-```
-
-Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
-`~/.config/Claude/claude_desktop_config.json` on Linux), Cursor (`~/.cursor/mcp.json`, or
-`.cursor/mcp.json` in a project), Gemini CLI (`~/.gemini/settings.json`) and Antigravity
-(`~/.gemini/config/mcp_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "skills-router": {
-      "command": "/abs/uvx",
-      "args": ["--from", "<url>", "skills-router", "serve"]
-    }
-  }
-}
-```
-
-For B use `"command": "/abs/uv"` and
-`"args": ["run", "--directory", "/abs/checkout", "skills-router", "serve"]`. For C use the
-output of `command -v skills-router` with `"args": ["serve"]`. If the file has comments
-(JSONC), keep them and add only the `skills-router` entry.
-
-Codex CLI (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.skills-router]
-command = "/abs/uvx"
-args = ["--from", "<url>", "skills-router", "serve"]
-```
-
-opencode (`~/.config/opencode/opencode.json`):
-
-```json
-{ "mcp": { "skills-router": { "type": "local", "enabled": true, "command": ["/abs/uvx", "--from", "<url>", "skills-router", "serve"] } } }
-```
+scope. Ask before editing. Merge into the existing object; never replace the file. Copy the
+client's snippet from `reference/client-setup.md` (Claude Code CLI; one `mcpServers` JSON shape
+for Claude Desktop, Cursor, Gemini CLI and Antigravity; Codex TOML; opencode JSON), replacing
+`/abs/uvx` with the output of `command -v uvx` and `<url>` as in 1.2. Always use absolute
+paths: GUI clients do not inherit the shell PATH.
 
 Manual registration alone does not install the orchestrator or import existing skills; the
 server only creates the empty `~/.ai-skills/skills` and `drafts` on its first start. Run `init`
@@ -315,14 +253,9 @@ Manual steps (ask before doing them, or give them to the user):
 
 ### 1.8 Server environment (optional)
 
-Set these in the client's MCP entry (`"env": {...}` or `claude mcp add -e KEY=VALUE`), because
-the client, not the shell, launches the server:
-
-| Variable | Effect |
-|---|---|
-| `AI_SKILLS_HOME` | Runtime folder instead of `~/.ai-skills`. Set the same value for the CLI. |
-| `SKILLS_ROUTER_PROMOTE=cli` | The `promote_draft` tool refuses; promotion only via `skills-router promote NAME` in a terminal. Any value other than `mcp` (case-insensitive) locks it. |
-| `SKILLS_ROUTER_COMMAND` | Read by `init` only: server command to register when `--server-command` is absent. |
+Set `AI_SKILLS_HOME` (other runtime folder) or `SKILLS_ROUTER_PROMOTE=cli` (promotion only
+from a terminal) in the client's MCP entry, not the shell, because the client launches the
+server. All variables: `reference/client-setup.md`.
 
 ### 1.9 Adding skills later
 
@@ -347,14 +280,8 @@ client folders, the MCP entries it registered, the activation hook and rule bloc
 the original skill folders back. Copies in `~/.ai-skills/skills` are kept. `--backup
 YYYYMMDD-HHMMSS` undoes only that run. A restored backup is marked and not undone twice.
 
-`restore` does not touch what was added by hand. For a full removal, also:
-
-1. Delete the `skills-router` entries you added in 1.5 (Claude Desktop, project scope, JSONC
-   files) and the rule text pasted in Cursor or Claude Desktop (1.6).
-2. Remove the launcher: `uv tool uninstall mcp-manage-router-skill` (C), delete the clone (B),
-   or `uv cache clean` (A, optional).
-3. `~/.ai-skills/skills` holds the only copy of promoted drafts and of bundled skills such as
-   `license-designer`. Copy any the user wants to keep, then delete `~/.ai-skills`.
+`restore` does not touch what was added by hand (1.5, 1.6) or the launcher itself. For a full
+removal, follow "Full removal" in `reference/client-setup.md`.
 
 ## Step 2: Lazy-loading protocol
 
@@ -448,89 +375,23 @@ Silence, an earlier approval or a generic "go ahead" does not count as approval.
 
 ## Step 3: Troubleshooting
 
-Server and installer messages are in Portuguese. Match on the quoted fragment.
+Server and installer messages are in Portuguese. Look up the symptom or the quoted message
+fragment in `reference/troubleshooting.md`, which maps each one to its cause and fix in five
+groups: agent does not search on its own, server will not connect, skill not found or not
+indexed, installer and folders, drafts and promotion. The most common cases:
 
-### Agent does not search on its own
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Tools are listed, but the agent answers without `search_installed_skills` | No activation trigger for that client | Check `activation` in `--configs`; re-run `init` without `--no-activation`, or follow the manual steps in 1.6. |
-| Searches only after exploring the repository | Rule file present, but rules are weaker than a hook | Expected for rule-based clients. The user can say "search skills first". |
-| Searches on small talk | Over-eager model | Harmless; the search returns nothing relevant. |
-
-### Server will not connect
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Tools missing after setup | Client not restarted | Restart the client. Run `--probe` to confirm the server itself starts. |
-| Works in a terminal, not in Claude Desktop or Cursor | GUI app cannot see the shell PATH | Use the absolute path of `uvx`, `uv` or `skills-router` in `command`. |
-| `--probe` says `uv could not fetch the git source` | Unpinned (A') or tag-pinned (`@v1.0.0`) uvx source and no network | Restore the network, or pin the release's full commit SHA (1.2). |
-| `--probe` times out on first run | uv is cloning and building the package | Re-run with `--timeout 90`. |
-| `launcher: ephemeral-cache-path` | `init` ran under uvx without `--server-command` | Re-run `init` with `--server-command` (1.3). |
-| Every client broke at once | Checkout registered via `uv run --directory` was moved or deleted | Switch to A or C and re-run `init`, or fix `--directory`. |
-| `` `claude mcp add` falhou `` | Claude CLI error | Run the `claude mcp add` line from 1.5 and read its error. |
-| `não é JSON puro; registre o servidor manualmente` | Config has comments (JSONC) or is invalid | Merge the snippet from 1.5 by hand. `--configs` shows `unparsable`. |
-
-### Skill not found or not indexed
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Search returns nothing | Portuguese, single-letter or stopword-only query | Use English nouns: tool, framework, file type, deliverable. |
-| Skill exists but never ranks | Vague `description`, no tags, generic name | Rewrite the frontmatter as in `reference/architecture.md`. |
-| `Skill 'x' não encontrada. Parecidas: ...` | Name typo | Use one of the suggested names or search. Folder names also work as aliases. |
-| `aponta (via symlink) para fora do diretório oficial` | Skill folder or `SKILL.md` symlinked from outside `skills/` | Copy the skill into `~/.ai-skills/skills/`. Symlinks inside it still work. |
-| `tem hardlinks; copie o arquivo` | Hard-linked `SKILL.md` (some dotfile and sync tools do this) | Replace it with a plain copy: `cp SKILL.md tmp && mv tmp SKILL.md`. |
-| `não é um arquivo regular` / `symlink quebrado` | FIFO, device or dangling link | Replace with a real file. |
-| Two skills, one invisible | Same `name` (case-insensitive); the first in sorted folder order wins | Rename one. `rebuild_index()` lists `duplicates_ignored`. |
-| Sub-skill not indexed | Wrong depth | Only `<skill>/SKILL.md` and `<pkg>/skills/<sub>/SKILL.md` are indexed. |
-| Hidden folder ignored | Top-level folder names starting with `.` are skipped | Rename the folder. |
-| Project skills (`.claude/skills` in a repo) not found | The router indexes only `~/.ai-skills/skills` | Move them there or keep them native. The health check lists them under `native_unrouted`. |
-| Description looks wrong | Frontmatter missing, invalid YAML, over 16 KB, nested over 32 levels, or uses YAML aliases | The server falls back to a line parser or the first paragraph. Fix the YAML; never use `&anchor` / `*alias`. |
-| `content` cut short | `SKILL.md` over 512 KB, so `truncated: true` | Move detail into supporting files under `reference/`. |
-
-### Installer and folders
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `é um symlink externo; não foi alterado` | Client skills folder is a symlink to dotfiles | Expected. Migrate those skills by hand or replace the link with a real folder. |
-| `já existe e não é gerenciado; link não criado` | A real folder has the pinned skill's name | Move that folder into `~/.ai-skills/skills` and re-run `skills-router pin NAME`. |
-| `Skill fixada 'x' não existe` | Pinned name not in the index | Check the spelling with `skills-router search x`. |
-| `Conflito em 'x'` | Same name, different content in two clients | First version kept; the other is in `~/.ai-skills/conflicts/<client>/x`. Ask the user which wins. |
-| `Mantido no lugar (não é skill)` | Folder without `SKILL.md` | Expected; never moved. |
-| `Cursor: as regras globais ficam na interface` | Cursor has no global rule file | Manual step in 1.6. |
-
-### Drafts and promotion
-
-| Message | Fix |
+| Symptom | Fix |
 |---|---|
-| `Nome de skill inválido` | Use `^[a-z0-9][a-z0-9-]{0,63}$`. |
-| `A descrição é obrigatória` / `no máximo 1024 caracteres` | Provide a description up to 1024 chars. |
-| `Conteúdo grande demais` / `O conteúdo da skill está vazio` | Body must be non-empty and at most 256 KB. |
-| `Não existe rascunho` | No `drafts/<name>/SKILL.md`. List drafts with `skills-router drafts`. |
-| `Promoção via MCP desativada nesta máquina` | `SKILLS_ROUTER_PROMOTE` locks it. The user runs `skills-router promote NAME`. |
-| `Já existe uma skill oficial chamada` | Folder or frontmatter name already taken. Pick a new name or have the user remove the old skill. |
-| `Rascunho recusado: contém symlink` / `arquivo especial ou com hardlink` / `outras skills aninhadas` | Drafts may hold only regular files and one top-level `SKILL.md`. |
-| `O frontmatter declara name=... diferente da pasta` | Make the frontmatter `name` equal the draft folder name. |
-| `é um symlink ou está fora do runtime` | `drafts/` or `skills/` is a symlink. Make them real folders under the runtime. |
-
-## CLI reference
-
-Prefix each command as in 1.2: `uvx --from <url>` (A), `uv run` inside the clone (B), nothing (C).
-
-```bash
-skills-router init [--dry-run] [--pin NAME]... [--clients LIST] [--server-command CMD] [--no-activation] [--expose pinned|all]
-skills-router status              # runtime, indexed count, pins, links per client
-skills-router search fastapi postgres --limit 5    # output: <score>  <name>  <description>
-skills-router pin NAME... | unpin NAME...
-skills-router drafts              # drafts awaiting approval
-skills-router promote NAME        # human-run promotion
-skills-router reindex             # rebuild index.json, list rejected skills
-skills-router restore [--backup YYYYMMDD-HHMMSS] [--dry-run]
-skills-router serve               # MCP server over stdio
-```
+| Tools missing after setup | Restart the client, then run the probe (1.7). |
+| Works in a terminal, not in Claude Desktop or Cursor | Use absolute paths in `command` (1.5). |
+| Tools listed, but the agent answers without searching | Check `activation` in `--configs`, then 1.6. |
+| A skill exists but is never found | Run `rebuild_index()` and read `unsafe_ignored` and `duplicates_ignored`. |
 
 ## Further reading
 
-`reference/architecture.md`: how the index and ranking work, a frontmatter template that
-ranks well, a tag taxonomy for hundreds of skills, a routing-precision check and the
-context-savings benchmark.
+- `reference/client-setup.md`: per-client wiring table, manual registration snippets, `init`
+  flags, server environment variables, CLI reference and full removal.
+- `reference/troubleshooting.md`: every known symptom and message with its cause and fix.
+- `reference/architecture.md`: how the index and ranking work, a frontmatter template that
+  ranks well, a tag taxonomy for hundreds of skills, a routing-precision check and the
+  context-savings benchmark.
